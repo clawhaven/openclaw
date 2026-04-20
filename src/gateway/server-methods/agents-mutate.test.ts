@@ -525,7 +525,7 @@ describe("agents.create", () => {
 
   it("creates a new agent successfully", async () => {
     const { respond, promise } = makeCall("agents.create", {
-      id: "test-agent",
+      agentId: "test-agent",
       displayName: "Test Agent",
       workspace: "/home/user/agents/test",
     });
@@ -551,7 +551,7 @@ describe("agents.create", () => {
     });
 
     const { promise } = makeCall("agents.create", {
-      id: "order-test",
+      agentId: "order-test",
       displayName: "Order Test",
       workspace: "/tmp/ws",
     });
@@ -564,7 +564,7 @@ describe("agents.create", () => {
 
   it("rejects creating an agent with reserved 'main' id", async () => {
     const { respond, promise } = makeCall("agents.create", {
-      id: "main",
+      agentId: "main",
       displayName: "Main Agent",
       workspace: "/tmp/ws",
     });
@@ -577,7 +577,7 @@ describe("agents.create", () => {
     mocks.findAgentEntryIndex.mockReturnValue(0);
 
     const { respond, promise } = makeCall("agents.create", {
-      id: "existing",
+      agentId: "existing",
       displayName: "Existing",
       workspace: "/tmp/ws",
     });
@@ -616,7 +616,7 @@ describe("agents.create", () => {
 
   it("writes identity to both config and IDENTITY.md", async () => {
     const { promise } = makeCall("agents.create", {
-      id: "plain-agent",
+      agentId: "plain-agent",
       displayName: "Plain Agent",
       workspace: "/tmp/ws",
     });
@@ -633,7 +633,7 @@ describe("agents.create", () => {
 
   it("writes emoji and avatar to both config and IDENTITY.md", async () => {
     const { promise } = makeCall("agents.create", {
-      id: "fancy-agent",
+      agentId: "fancy-agent",
       displayName: "Fancy Agent",
       workspace: "/tmp/ws",
       emoji: "🤖",
@@ -669,7 +669,7 @@ describe("agents.create", () => {
     );
 
     const { respond, promise } = makeCall("agents.create", {
-      id: "unsafe-agent",
+      agentId: "unsafe-agent",
       displayName: "Unsafe Agent",
       workspace: "/tmp/ws",
     });
@@ -693,7 +693,7 @@ describe("agents.create", () => {
     });
 
     const { promise } = makeCall("agents.create", {
-      id: "unreadable-identity",
+      agentId: "unreadable-identity",
       displayName: "Unreadable Identity",
       workspace: "/tmp/ws",
     });
@@ -713,7 +713,7 @@ describe("agents.create", () => {
     });
 
     const { respond, promise } = makeCall("agents.create", {
-      id: "unsafe-identity-read",
+      agentId: "unsafe-identity-read",
       displayName: "Unsafe Identity Read",
       workspace: "/tmp/ws",
     });
@@ -731,7 +731,7 @@ describe("agents.create", () => {
     agentsTesting.setDepsForTests({ root: makeRootForTest({ read: rootRead }) });
 
     const { promise } = makeCall("agents.create", {
-      id: "nb-agent",
+      agentId: "nb-agent",
       displayName: "NB Agent",
       workspace: "/tmp/ws",
     });
@@ -745,7 +745,7 @@ describe("agents.create", () => {
 
   it("passes model to applyAgentConfig when provided", async () => {
     const { respond, promise } = makeCall("agents.create", {
-      id: "model-agent",
+      agentId: "model-agent",
       displayName: "Model Agent",
       workspace: "/tmp/ws",
       model: "sonnet-4.6",
@@ -776,7 +776,7 @@ describe("agents.create", () => {
     };
 
     const { promise } = makeCall("agents.create", {
-      id: "ssh-agent",
+      agentId: "ssh-agent",
       displayName: "SSH Agent",
       workspace: "/tmp/ws",
       config: { sandbox: sandboxConfig },
@@ -803,7 +803,7 @@ describe("agents.create", () => {
 
   it("skips mergeAgentConfigOverrides when no config is provided", async () => {
     const { promise } = makeCall("agents.create", {
-      id: "plain-no-config",
+      agentId: "plain-no-config",
       displayName: "Plain",
       workspace: "/tmp/ws",
     });
@@ -820,7 +820,7 @@ describe("agents.update", () => {
       agents: {
         list: [
           {
-            id: "test-agent",
+            agentId: "test-agent",
             workspace: "/workspace/test-agent",
             identity: {
               name: "Current Agent",
@@ -1390,7 +1390,7 @@ describe("agents.files.get/set symlink safety", () => {
     vi.clearAllMocks();
     mocks.loadConfigReturn = {
       agents: {
-        list: [{ id: "main", workspace: "/workspace/test-agent" }],
+        list: [{ agentId: "main", workspace: "/workspace/test-agent" }],
       },
     };
     mocks.fsMkdir.mockResolvedValue(undefined);

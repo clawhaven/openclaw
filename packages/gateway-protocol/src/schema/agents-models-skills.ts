@@ -104,7 +104,7 @@ export const AgentsListResultSchema = Type.Object(
 /** Creates a configured agent with workspace, identity, and optional model. */
 export const AgentsCreateParamsSchema = Type.Object(
   {
-    id: NonEmptyString,
+    agentId: NonEmptyString,
     displayName: NonEmptyString,
     workspace: NonEmptyString,
     model: Type.Optional(NonEmptyString),

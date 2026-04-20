@@ -511,7 +511,7 @@ export const agentsHandlers: GatewayRequestHandlers = {
     }
 
     const cfg = context.getRuntimeConfig();
-    const agentId = normalizeAgentId(params.id.trim());
+    const agentId = normalizeAgentId(params.agentId.trim());
     if (agentId === DEFAULT_AGENT_ID) {
       respond(
         false,
