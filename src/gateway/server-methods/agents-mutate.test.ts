@@ -102,6 +102,7 @@ vi.mock("../../config/config.js", async () => {
 
 vi.mock("../../commands/agents.config.js", () => ({
   applyAgentConfig: mocks.applyAgentConfig,
+  mergeAgentConfigOverrides: mocks.mergeAgentConfigOverrides,
   findAgentEntryIndex: mocks.findAgentEntryIndex,
   listAgentEntries: mocks.listAgentEntries,
   mergeAgentConfigOverrides: mocks.mergeAgentConfigOverrides,
@@ -753,6 +754,62 @@ describe("agents.create", () => {
 
     expectRespondOk(respond, { ok: true, model: "sonnet-4.6" });
     expectRecordFields(mockCallArg(mocks.applyAgentConfig, 0, 1), { model: "sonnet-4.6" });
+  });
+
+  it("merges config overrides into agent entry when config is provided", async () => {
+    const sandboxConfig = {
+      browser: { enabled: false, allowHostControl: true },
+      mode: "non-main",
+      backend: "ssh",
+      scope: "agent",
+      workspaceAccess: "rw",
+      workspaceRoot: "/tmp/openclaw-sandboxes",
+      ssh: {
+        target: "user@sandbox-host.example.com:22",
+        strictHostKeyChecking: true,
+        updateHostKeys: true,
+        identityData: { source: "env", provider: "default", id: "SSH_IDENTITY" },
+        knownHostsData: { source: "env", provider: "default", id: "SSH_KNOWN_HOSTS" },
+      },
+      sessionToolsVisibility: "all",
+      prune: { idleHours: 4, maxAgeDays: 3 },
+    };
+
+    const { promise } = makeCall("agents.create", {
+      id: "ssh-agent",
+      displayName: "SSH Agent",
+      workspace: "/tmp/ws",
+      config: { sandbox: sandboxConfig },
+    });
+    await promise;
+
+    expect(mocks.mergeAgentConfigOverrides).toHaveBeenCalledWith(
+      expect.anything(),
+      "ssh-agent",
+      expect.objectContaining({ sandbox: sandboxConfig }),
+    );
+    // Protected fields must not be forwarded to the merge helper
+    expect(mocks.mergeAgentConfigOverrides).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      expect.not.objectContaining({ id: expect.anything() }),
+    );
+    expect(mocks.mergeAgentConfigOverrides).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      expect.not.objectContaining({ workspace: expect.anything() }),
+    );
+  });
+
+  it("skips mergeAgentConfigOverrides when no config is provided", async () => {
+    const { promise } = makeCall("agents.create", {
+      id: "plain-no-config",
+      displayName: "Plain",
+      workspace: "/tmp/ws",
+    });
+    await promise;
+
+    expect(mocks.mergeAgentConfigOverrides).not.toHaveBeenCalled();
   });
 });
 
