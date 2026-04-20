@@ -11,6 +11,7 @@ const mocks = vi.hoisted(() => ({
   listAgentEntries: vi.fn((_cfg?: unknown) => [] as Array<Record<string, unknown>>),
   findAgentEntryIndex: vi.fn((_list?: unknown, _agentId?: string) => -1),
   applyAgentConfig: vi.fn((_cfg: unknown, _opts: unknown) => ({})),
+  mergeAgentConfigOverrides: vi.fn((cfg: unknown, _agentId: unknown, _overrides: unknown) => cfg),
   pruneAgentConfig: vi.fn(() => ({ config: {}, removedBindings: 0 })),
   writeConfigFile: vi.fn(async (_nextConfig?: unknown) => {}),
   ensureAgentWorkspace: vi.fn(
@@ -103,6 +104,7 @@ vi.mock("../../commands/agents.config.js", () => ({
   applyAgentConfig: mocks.applyAgentConfig,
   findAgentEntryIndex: mocks.findAgentEntryIndex,
   listAgentEntries: mocks.listAgentEntries,
+  mergeAgentConfigOverrides: mocks.mergeAgentConfigOverrides,
   pruneAgentConfig: mocks.pruneAgentConfig,
 }));
 
@@ -522,7 +524,8 @@ describe("agents.create", () => {
 
   it("creates a new agent successfully", async () => {
     const { respond, promise } = makeCall("agents.create", {
-      name: "Test Agent",
+      id: "test-agent",
+      displayName: "Test Agent",
       workspace: "/home/user/agents/test",
     });
     await promise;
@@ -530,7 +533,7 @@ describe("agents.create", () => {
     expectRespondOk(respond, {
       ok: true,
       agentId: "test-agent",
-      name: "Test Agent",
+      displayName: "Test Agent",
     });
     expect(mocks.ensureAgentWorkspace).toHaveBeenCalled();
     expect(mocks.writeConfigFile).toHaveBeenCalled();
@@ -547,7 +550,8 @@ describe("agents.create", () => {
     });
 
     const { promise } = makeCall("agents.create", {
-      name: "Order Test",
+      id: "order-test",
+      displayName: "Order Test",
       workspace: "/tmp/ws",
     });
     await promise;
@@ -559,7 +563,8 @@ describe("agents.create", () => {
 
   it("rejects creating an agent with reserved 'main' id", async () => {
     const { respond, promise } = makeCall("agents.create", {
-      name: "main",
+      id: "main",
+      displayName: "Main Agent",
       workspace: "/tmp/ws",
     });
     await promise;
@@ -571,7 +576,8 @@ describe("agents.create", () => {
     mocks.findAgentEntryIndex.mockReturnValue(0);
 
     const { respond, promise } = makeCall("agents.create", {
-      name: "Existing",
+      id: "existing",
+      displayName: "Existing",
       workspace: "/tmp/ws",
     });
     await promise;
@@ -588,7 +594,8 @@ describe("agents.create", () => {
     });
 
     const { respond, promise } = makeCall("agents.create", {
-      name: "Race Agent",
+      id: "race-agent",
+      displayName: "Race Agent",
       workspace: "/tmp/ws",
     });
     await promise;
@@ -597,7 +604,7 @@ describe("agents.create", () => {
     expect(mocks.writeConfigFile).not.toHaveBeenCalled();
   });
 
-  it("rejects invalid params (missing name)", async () => {
+  it("rejects invalid params (missing id)", async () => {
     const { respond, promise } = makeCall("agents.create", {
       workspace: "/tmp/ws",
     });
@@ -608,7 +615,8 @@ describe("agents.create", () => {
 
   it("writes identity to both config and IDENTITY.md", async () => {
     const { promise } = makeCall("agents.create", {
-      name: "Plain Agent",
+      id: "plain-agent",
+      displayName: "Plain Agent",
       workspace: "/tmp/ws",
     });
     await promise;
@@ -624,7 +632,8 @@ describe("agents.create", () => {
 
   it("writes emoji and avatar to both config and IDENTITY.md", async () => {
     const { promise } = makeCall("agents.create", {
-      name: "Fancy Agent",
+      id: "fancy-agent",
+      displayName: "Fancy Agent",
       workspace: "/tmp/ws",
       emoji: "🤖",
       avatar: "https://example.com/avatar.png",
@@ -659,7 +668,8 @@ describe("agents.create", () => {
     );
 
     const { respond, promise } = makeCall("agents.create", {
-      name: "Unsafe Agent",
+      id: "unsafe-agent",
+      displayName: "Unsafe Agent",
       workspace: "/tmp/ws",
     });
     await promise;
@@ -682,7 +692,8 @@ describe("agents.create", () => {
     });
 
     const { promise } = makeCall("agents.create", {
-      name: "Unreadable Identity",
+      id: "unreadable-identity",
+      displayName: "Unreadable Identity",
       workspace: "/tmp/ws",
     });
 
@@ -701,7 +712,8 @@ describe("agents.create", () => {
     });
 
     const { respond, promise } = makeCall("agents.create", {
-      name: "Unsafe Identity Read",
+      id: "unsafe-identity-read",
+      displayName: "Unsafe Identity Read",
       workspace: "/tmp/ws",
     });
     await promise;
@@ -718,7 +730,8 @@ describe("agents.create", () => {
     agentsTesting.setDepsForTests({ root: makeRootForTest({ read: rootRead }) });
 
     const { promise } = makeCall("agents.create", {
-      name: "NB Agent",
+      id: "nb-agent",
+      displayName: "NB Agent",
       workspace: "/tmp/ws",
     });
     await promise;
@@ -731,7 +744,8 @@ describe("agents.create", () => {
 
   it("passes model to applyAgentConfig when provided", async () => {
     const { respond, promise } = makeCall("agents.create", {
-      name: "Model Agent",
+      id: "model-agent",
+      displayName: "Model Agent",
       workspace: "/tmp/ws",
       model: "sonnet-4.6",
     });

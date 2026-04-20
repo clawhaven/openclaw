@@ -13,6 +13,7 @@ import {
 import type { AgentIdentityFile } from "../agents/identity-file.js";
 import { identityHasValues, loadAgentIdentityFromWorkspace } from "../agents/identity-file.js";
 import { listRouteBindings } from "../config/bindings.js";
+import type { AgentConfig } from "../config/types.agents.js";
 import type { IdentityConfig } from "../config/types.base.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { normalizeAgentId } from "../routing/session-key.js";
@@ -145,6 +146,33 @@ export function applyAgentConfig(
     }
     nextList.push(nextEntry);
   }
+  return {
+    ...cfg,
+    agents: {
+      ...cfg.agents,
+      list: nextList,
+    },
+  };
+}
+
+/**
+ * Merges arbitrary AgentConfig overrides into an existing agent entry.
+ * Protected fields (id, name, workspace, agentDir) are stripped from overrides
+ * so explicit create/update params always win.
+ */
+export function mergeAgentConfigOverrides(
+  cfg: OpenClawConfig,
+  agentId: string,
+  overrides: Partial<Omit<AgentConfig, "id" | "name" | "workspace" | "agentDir">>,
+): OpenClawConfig {
+  const id = normalizeAgentId(agentId);
+  const list = listAgentEntries(cfg);
+  const index = list.findIndex((e) => normalizeAgentId(e.id) === id);
+  if (index < 0) {
+    return cfg;
+  }
+  const nextList = [...list];
+  nextList[index] = { ...list[index], ...overrides };
   return {
     ...cfg,
     agents: {

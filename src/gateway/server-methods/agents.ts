@@ -37,11 +37,12 @@ import {
   resolveWorkspaceAttestationPaths,
   shouldRemoveWorkspaceAttestation,
 } from "../../agents/workspace.js";
-import { applyAgentConfig } from "../../commands/agents.config.js";
+import { applyAgentConfig, mergeAgentConfigOverrides } from "../../commands/agents.config.js";
 import {
   purgeAgentSessionStoreEntries,
   resolveSessionTranscriptsDirForAgent,
 } from "../../config/sessions.js";
+import type { AgentConfig } from "../../config/types.agents.js";
 import type { IdentityConfig } from "../../config/types.base.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import { root, FsSafeError, type ReadResult } from "../../infra/fs-safe.js";
@@ -510,8 +511,7 @@ export const agentsHandlers: GatewayRequestHandlers = {
     }
 
     const cfg = context.getRuntimeConfig();
-    const rawName = params.name.trim();
-    const agentId = normalizeAgentId(rawName);
+    const agentId = normalizeAgentId(params.id.trim());
     if (agentId === DEFAULT_AGENT_ID) {
       respond(
         false,
@@ -532,7 +532,7 @@ export const agentsHandlers: GatewayRequestHandlers = {
 
     const workspaceDir = resolveUserPath(params.workspace.trim());
 
-    const safeName = sanitizeIdentityLine(rawName);
+    const safeName = sanitizeIdentityLine(params.displayName.trim());
     const model = resolveOptionalStringParam(params.model);
     const identity = createAgentIdentityConfig({
       safeName,
@@ -552,6 +552,23 @@ export const agentsHandlers: GatewayRequestHandlers = {
     const agentDir = resolveAgentDir(nextConfig, agentId);
     nextConfig = applyAgentConfig(nextConfig, { agentId, agentDir });
 
+    // Apply optional config overrides AFTER explicit params so that id/name/workspace/agentDir
+    // set above always win.
+    let configOverrides:
+      | Partial<Omit<AgentConfig, "id" | "name" | "workspace" | "agentDir">>
+      | undefined;
+    if (params.config && typeof params.config === "object") {
+      const {
+        id: _id,
+        name: _name,
+        workspace: _ws,
+        agentDir: _dir,
+        ...overrides
+      } = params.config as Partial<AgentConfig>;
+      configOverrides = overrides;
+      nextConfig = mergeAgentConfigOverrides(nextConfig, agentId, overrides);
+    }
+
     // Ensure workspace & transcripts exist BEFORE writing config so a failure
     // here does not leave a broken config entry behind.
     const skipBootstrap = Boolean(nextConfig.agents?.defaults?.skipBootstrap);
@@ -562,25 +579,27 @@ export const agentsHandlers: GatewayRequestHandlers = {
     });
     await fs.mkdir(resolveSessionTranscriptsDirForAgent(agentId), { recursive: true });
 
-    const persistedIdentity = normalizeIdentityForFile(resolveAgentIdentity(nextConfig, agentId));
-    if (persistedIdentity) {
-      const identityContent = await buildIdentityMarkdownOrRespondUnsafe({
-        respond,
-        workspaceDir,
-        identity: persistedIdentity,
-      });
-      if (identityContent === null) {
-        return;
-      }
-      if (
-        !(await writeWorkspaceFileOrRespond({
+    if (!skipBootstrap) {
+      const persistedIdentity = normalizeIdentityForFile(resolveAgentIdentity(nextConfig, agentId));
+      if (persistedIdentity) {
+        const identityContent = await buildIdentityMarkdownOrRespondUnsafe({
           respond,
           workspaceDir,
-          name: DEFAULT_IDENTITY_FILENAME,
-          content: identityContent,
-        }))
-      ) {
-        return;
+          identity: persistedIdentity,
+        });
+        if (identityContent === null) {
+          return;
+        }
+        if (
+          !(await writeWorkspaceFileOrRespond({
+            respond,
+            workspaceDir,
+            name: DEFAULT_IDENTITY_FILENAME,
+            content: identityContent,
+          }))
+        ) {
+          return;
+        }
       }
     }
     try {
@@ -591,6 +610,7 @@ export const agentsHandlers: GatewayRequestHandlers = {
         model,
         identity,
         agentDir,
+        configOverrides,
       });
     } catch (error) {
       if (error instanceof AgentConfigPreconditionError) {
@@ -600,7 +620,11 @@ export const agentsHandlers: GatewayRequestHandlers = {
       throw error;
     }
 
-    respond(true, { ok: true, agentId, name: safeName, workspace: workspaceDir, model }, undefined);
+    respond(
+      true,
+      { ok: true, agentId, displayName: safeName, workspace: workspaceDir, model },
+      undefined,
+    );
   },
   "agents.update": async ({ params, respond, context }) => {
     if (!validateAgentsUpdateParams(params)) {
@@ -653,8 +677,9 @@ export const agentsHandlers: GatewayRequestHandlers = {
       });
     }
 
+    const skipBootstrapForUpdate = Boolean(nextConfig.agents?.defaults?.skipBootstrap);
     const persistedIdentity = normalizeIdentityForFile(resolveAgentIdentity(nextConfig, agentId));
-    if (persistedIdentity && (workspaceDir || hasIdentityFields)) {
+    if (!skipBootstrapForUpdate && persistedIdentity && (workspaceDir || hasIdentityFields)) {
       const identityWorkspaceDir = resolveAgentWorkspaceDir(nextConfig, agentId);
       const previousWorkspaceDir = resolveAgentWorkspaceDir(cfg, agentId);
       const fallbackWorkspaceDir =
