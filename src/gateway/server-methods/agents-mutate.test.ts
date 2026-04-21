@@ -820,7 +820,7 @@ describe("agents.update", () => {
       agents: {
         list: [
           {
-            agentId: "test-agent",
+            id: "test-agent",
             workspace: "/workspace/test-agent",
             identity: {
               name: "Current Agent",
@@ -1390,7 +1390,7 @@ describe("agents.files.get/set symlink safety", () => {
     vi.clearAllMocks();
     mocks.loadConfigReturn = {
       agents: {
-        list: [{ agentId: "main", workspace: "/workspace/test-agent" }],
+        list: [{ id: "main", workspace: "/workspace/test-agent" }],
       },
     };
     mocks.fsMkdir.mockResolvedValue(undefined);
