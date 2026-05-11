@@ -5086,52 +5086,60 @@ public struct AgentSummary: Codable, Sendable {
 }
 
 public struct AgentsCreateParams: Codable, Sendable {
-    public let name: String
+    public let agentid: String
+    public let displayname: String
     public let workspace: String
     public let model: String?
     public let emoji: String?
     public let avatar: String?
+    public let config: [String: AnyCodable]?
 
     public init(
-        name: String,
+        agentid: String,
+        displayname: String,
         workspace: String,
         model: String?,
         emoji: String?,
-        avatar: String?)
+        avatar: String?,
+        config: [String: AnyCodable]?)
     {
-        self.name = name
+        self.agentid = agentid
+        self.displayname = displayname
         self.workspace = workspace
         self.model = model
         self.emoji = emoji
         self.avatar = avatar
+        self.config = config
     }
 
     private enum CodingKeys: String, CodingKey {
-        case name
+        case agentid = "agentId"
+        case displayname = "displayName"
         case workspace
         case model
         case emoji
         case avatar
+        case config
     }
 }
 
 public struct AgentsCreateResult: Codable, Sendable {
     public let ok: Bool
     public let agentid: String
-    public let name: String
+    public let displayname: String
     public let workspace: String
     public let model: String?
 
     public init(
         ok: Bool,
         agentid: String,
-        name: String,
+        displayname: String,
         workspace: String,
         model: String?)
     {
         self.ok = ok
         self.agentid = agentid
-        self.name = name
+        self.displayname = displayname
         self.workspace = workspace
         self.model = model
     }
@@ -5139,7 +5147,7 @@ public struct AgentsCreateResult: Codable, Sendable {
     private enum CodingKeys: String, CodingKey {
         case ok
         case agentid = "agentId"
-        case name
+        case displayname = "displayName"
         case workspace
         case model
     }
