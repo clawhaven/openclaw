@@ -595,7 +595,7 @@ describe("agents.create", () => {
     });
 
     const { respond, promise } = makeCall("agents.create", {
-      id: "race-agent",
+      agentId: "race-agent",
       displayName: "Race Agent",
       workspace: "/tmp/ws",
     });
