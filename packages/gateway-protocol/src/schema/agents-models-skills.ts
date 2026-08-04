@@ -104,11 +104,13 @@ export const AgentsListResultSchema = Type.Object(
 /** Creates a configured agent with workspace, identity, and optional model. */
 export const AgentsCreateParamsSchema = Type.Object(
   {
-    name: NonEmptyString,
+    agentId: NonEmptyString,
+    displayName: NonEmptyString,
     workspace: NonEmptyString,
     model: Type.Optional(NonEmptyString),
     emoji: Type.Optional(Type.String()),
     avatar: Type.Optional(Type.String()),
+    config: Type.Optional(Type.Object({}, { additionalProperties: true })),
   },
   { additionalProperties: false },
 );
@@ -118,7 +120,7 @@ export const AgentsCreateResultSchema = Type.Object(
   {
     ok: Type.Literal(true),
     agentId: NonEmptyString,
-    name: NonEmptyString,
+    displayName: NonEmptyString,
     workspace: NonEmptyString,
     model: Type.Optional(NonEmptyString),
   },
