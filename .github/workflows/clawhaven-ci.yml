@@ -1,0 +1,62 @@
+name: Clawhaven CI
+
+on:
+  workflow_dispatch:
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
+jobs:
+  gate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          fetch-tags: false
+          persist-credentials: false
+          submodules: false
+
+      - name: Fetch base branch
+        run: git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main
+
+      - name: Setup Node environment
+        uses: ./.github/actions/setup-node-env
+        with:
+          install-bun: "false"
+
+      - name: Protocol generated files
+        run: pnpm protocol:check
+
+      - name: Agent create gateway tests
+        run: pnpm test src/gateway/server-methods/agents-mutate.test.ts
+
+      - name: Agent command tests
+        run: |
+          pnpm test \
+            src/commands/agents.test.ts \
+            src/commands/agents.add.test.ts \
+            src/commands/agents.identity.test.ts \
+            src/commands/agents.commands.list.test.ts \
+            src/commands/agents.delete.test.ts \
+            src/commands/agents.providers.test.ts \
+            src/commands/agents.bind.commands.test.ts \
+            src/commands/agents.bind.matrix.integration.test.ts
+
+      - name: Agent tool tests
+        run: |
+          pnpm test \
+            src/agents/openclaw-tools.agents.test.ts \
+            src/agents/tools/agents-list-tool.test.ts
