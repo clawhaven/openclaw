@@ -1,0 +1,407 @@
+name: Clawhaven Nightly Release Sync
+
+on:
+  schedule:
+    - cron: "0 0 * * *"
+  workflow_dispatch:
+    inputs:
+      head_branch:
+        description: PR branch to rebase after syncing fork main.
+        required: false
+        default: clawhaven/agents-create-improvements
+        type: string
+      release_tag:
+        description: Optional stable upstream release tag to sync instead of GitHub's latest release.
+        required: false
+        type: string
+      dry_run:
+        description: Resolve and replay locally without pushing or dispatching checks.
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  actions: write
+  contents: write
+  issues: write
+  pull-requests: write
+
+concurrency:
+  group: clawhaven-nightly-release-sync
+  cancel-in-progress: false
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+  UPSTREAM_REPOSITORY: openclaw/openclaw
+  UPSTREAM_GIT_URL: https://github.com/openclaw/openclaw.git
+  STATE_FILE: .github/clawhaven-release-sync.json
+  WORKFLOW_FILE: .github/workflows/clawhaven-nightly-sync.yml
+  CI_WORKFLOW_FILE: .github/workflows/clawhaven-ci.yml
+  PRESERVED_UPSTREAM_CI_WORKFLOW_FILE: .github/workflows/ci.yml
+  DEFAULT_HEAD_BRANCH: clawhaven/agents-create-improvements
+  HEAD_BRANCH_INPUT: ${{ github.event_name == 'workflow_dispatch' && inputs.head_branch || '' }}
+  RELEASE_TAG_INPUT: ${{ github.event_name == 'workflow_dispatch' && inputs.release_tag || '' }}
+  DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run && 'true' || 'false' }}
+
+jobs:
+  sync:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Checkout fork main
+        uses: actions/checkout@v6
+        with:
+          ref: main
+          fetch-depth: 0
+          fetch-tags: false
+          persist-credentials: false
+          submodules: false
+
+      - name: Resolve upstream release
+        id: release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+
+          release_json="${RUNNER_TEMP}/clawhaven-release.json"
+          if [ -n "${RELEASE_TAG_INPUT}" ]; then
+            gh release view "${RELEASE_TAG_INPUT}" \
+              --repo "${UPSTREAM_REPOSITORY}" \
+              --json tagName,isDraft,isPrerelease,publishedAt,targetCommitish,url \
+              > "${release_json}"
+          else
+            gh api "repos/${UPSTREAM_REPOSITORY}/releases/latest" > "${release_json}"
+          fi
+
+          RELEASE_JSON="${release_json}" python3 - <<'PY'
+          from __future__ import annotations
+
+          import json
+          import os
+          import pathlib
+          import sys
+
+          release = json.loads(pathlib.Path(os.environ["RELEASE_JSON"]).read_text())
+          tag_name = release.get("tagName") or release.get("tag_name")
+          is_draft = bool(release.get("isDraft") or release.get("draft"))
+          is_prerelease = bool(release.get("isPrerelease") or release.get("prerelease"))
+          published_at = release.get("publishedAt") or release.get("published_at") or ""
+          target_commitish = release.get("targetCommitish") or release.get("target_commitish") or ""
+          url = release.get("url") or release.get("html_url") or ""
+
+          if not isinstance(tag_name, str) or not tag_name:
+            print("Unable to resolve an upstream release tag.", file=sys.stderr)
+            sys.exit(1)
+          if is_draft:
+            print(f"Refusing to sync draft release {tag_name}.", file=sys.stderr)
+            sys.exit(1)
+          if is_prerelease:
+            print(f"Refusing to sync prerelease {tag_name}.", file=sys.stderr)
+            sys.exit(1)
+
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
+            output.write(f"tag={tag_name}\n")
+            output.write(f"published_at={published_at}\n")
+            output.write(f"target_commitish={target_commitish}\n")
+            output.write(f"url={url}\n")
+          PY
+
+      - name: Resolve release commit
+        id: release_commit
+        env:
+          RELEASE_TAG: ${{ steps.release.outputs.tag }}
+        run: |
+          set -euo pipefail
+
+          if ! git check-ref-format "refs/tags/${RELEASE_TAG}"; then
+            echo "Invalid release tag: ${RELEASE_TAG}" >&2
+            exit 1
+          fi
+
+          peeled_sha="$(git ls-remote --tags "${UPSTREAM_GIT_URL}" "refs/tags/${RELEASE_TAG}^{}" | awk '{print $1}' | head -n 1)"
+          direct_sha="$(git ls-remote --tags "${UPSTREAM_GIT_URL}" "refs/tags/${RELEASE_TAG}" | awk '{print $1}' | head -n 1)"
+          release_sha="${peeled_sha:-${direct_sha}}"
+
+          if [[ ! "${release_sha}" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "Unable to resolve ${UPSTREAM_REPOSITORY} release tag ${RELEASE_TAG} to a commit." >&2
+            exit 1
+          fi
+
+          echo "sha=${release_sha}" >> "${GITHUB_OUTPUT}"
+
+      - name: Check sync state
+        id: state
+        env:
+          RELEASE_TAG: ${{ steps.release.outputs.tag }}
+          RELEASE_SHA: ${{ steps.release_commit.outputs.sha }}
+        run: |
+          set -euo pipefail
+
+          if [ ! -f "${STATE_FILE}" ]; then
+            {
+              echo "up_to_date=false"
+              echo "current_tag="
+              echo "current_sha="
+            } >> "${GITHUB_OUTPUT}"
+            exit 0
+          fi
+
+          python3 - <<'PY'
+          from __future__ import annotations
+
+          import json
+          import os
+          import pathlib
+
+          state_path = pathlib.Path(os.environ["STATE_FILE"])
+          try:
+            state = json.loads(state_path.read_text())
+          except json.JSONDecodeError:
+            state = {}
+
+          current_tag = state.get("releaseTag") or ""
+          current_sha = state.get("releaseSha") or ""
+          up_to_date = (
+            current_tag == os.environ["RELEASE_TAG"]
+            and current_sha == os.environ["RELEASE_SHA"]
+          )
+
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
+            output.write(f"up_to_date={str(up_to_date).lower()}\n")
+            output.write(f"current_tag={current_tag}\n")
+            output.write(f"current_sha={current_sha}\n")
+          PY
+
+      - name: Report no-op
+        if: steps.state.outputs.up_to_date == 'true'
+        env:
+          RELEASE_TAG: ${{ steps.release.outputs.tag }}
+          RELEASE_SHA: ${{ steps.release_commit.outputs.sha }}
+          RELEASE_URL: ${{ steps.release.outputs.url }}
+        run: |
+          {
+            echo "## ClawHaven release sync"
+            echo
+            echo "- Latest stable release: [${RELEASE_TAG}](${RELEASE_URL})"
+            echo "- Release SHA: \`${RELEASE_SHA}\`"
+            echo "- Result: fork main already records this release; no branch updates or check dispatch were needed."
+          } >> "${GITHUB_STEP_SUMMARY}"
+
+      - name: Sync fork main and PR branch
+        if: steps.state.outputs.up_to_date != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ steps.release.outputs.tag }}
+          RELEASE_SHA: ${{ steps.release_commit.outputs.sha }}
+          RELEASE_URL: ${{ steps.release.outputs.url }}
+          RELEASE_PUBLISHED_AT: ${{ steps.release.outputs.published_at }}
+        run: |
+          set -euo pipefail
+
+          head_branch="${HEAD_BRANCH_INPUT:-${DEFAULT_HEAD_BRANCH}}"
+          if [ -z "${head_branch}" ]; then
+            echo "Head branch cannot be empty." >&2
+            exit 1
+          fi
+          if [ "${head_branch}" = "main" ]; then
+            echo "Head branch must not be main." >&2
+            exit 1
+          fi
+          if ! git check-ref-format "refs/heads/${head_branch}"; then
+            echo "Invalid head branch: ${head_branch}" >&2
+            exit 1
+          fi
+
+          fork_owned_paths=(
+            "${WORKFLOW_FILE}"
+            "${CI_WORKFLOW_FILE}"
+            "${PRESERVED_UPSTREAM_CI_WORKFLOW_FILE}"
+            "${STATE_FILE}"
+          )
+
+          post_pr_comment() {
+            local title="$1"
+            local body="$2"
+
+            if [ "${DRY_RUN}" = "true" ]; then
+              echo "Dry run: not posting PR comment for ${title}."
+              return 0
+            fi
+
+            local pr_number
+            pr_number="$(gh pr list \
+              --repo "${GITHUB_REPOSITORY}" \
+              --head "${head_branch}" \
+              --base main \
+              --state open \
+              --json number \
+              --jq '.[0].number // ""')"
+            if [ -z "${pr_number}" ]; then
+              echo "No open PR found for ${head_branch}; cannot post sync comment." >&2
+              return 0
+            fi
+
+            local marker="<!-- clawhaven-nightly-sync -->"
+            local comment_path="${RUNNER_TEMP}/clawhaven-sync-comment.md"
+            {
+              printf '%s\n' "${marker}"
+              printf '## %s\n\n' "${title}"
+              printf -- '- Release: [%s](%s)\n' "${RELEASE_TAG}" "${RELEASE_URL}"
+              printf -- '- Release SHA: `%s`\n' "${RELEASE_SHA}"
+              printf -- '- Head branch: `%s`\n\n' "${head_branch}"
+              printf '%s\n' "${body}"
+            } > "${comment_path}"
+
+            local existing_id
+            existing_id="$(gh api --paginate "repos/${GITHUB_REPOSITORY}/issues/${pr_number}/comments" \
+              --jq ".[] | select(.body | contains(\"${marker}\")) | .id" \
+              | head -n 1)"
+
+            if [ -n "${existing_id}" ]; then
+              gh api -X PATCH "repos/${GITHUB_REPOSITORY}/issues/comments/${existing_id}" \
+                -f "body=$(cat "${comment_path}")" >/dev/null
+            else
+              gh api -X POST "repos/${GITHUB_REPOSITORY}/issues/${pr_number}/comments" \
+                -f "body=$(cat "${comment_path}")" >/dev/null
+            fi
+          }
+
+          dispatch_checks() {
+            local attempt
+            for attempt in 1 2 3 4 5; do
+              if gh workflow run "${CI_WORKFLOW_FILE}" \
+                --repo "${GITHUB_REPOSITORY}" \
+                --ref "${head_branch}"; then
+                return 0
+              fi
+              sleep "$((attempt * 5))"
+            done
+            return 1
+          }
+
+          fork_owned_dir="${RUNNER_TEMP}/clawhaven-fork-owned"
+          rm -rf "${fork_owned_dir}"
+
+          for path in "${fork_owned_paths[@]}"; do
+            if [ ! -f "${path}" ]; then
+              echo "Missing fork-owned file ${path}." >&2
+              exit 1
+            fi
+            mkdir -p "${fork_owned_dir}/$(dirname "${path}")"
+            cp -a "${path}" "${fork_owned_dir}/${path}"
+          done
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git remote set-url origin "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          git remote add upstream "${UPSTREAM_GIT_URL}" 2>/dev/null || git remote set-url upstream "${UPSTREAM_GIT_URL}"
+
+          git fetch --no-tags origin \
+            "+refs/heads/main:refs/remotes/origin/main" \
+            "+refs/heads/${head_branch}:refs/remotes/origin/${head_branch}"
+          git fetch --no-tags --depth=1 upstream \
+            "+refs/tags/${RELEASE_TAG}:refs/tags/${RELEASE_TAG}"
+
+          old_main_sha="$(git rev-parse refs/remotes/origin/main)"
+          old_head_sha="$(git rev-parse "refs/remotes/origin/${head_branch}")"
+
+          git switch --detach "${RELEASE_SHA}"
+          git switch -C clawhaven-sync-main
+
+          # Fork GITHUB_TOKEN cannot push arbitrary upstream workflow changes.
+          # Keep the fork-owned workflow surface only; upstream CI remains
+          # available through the preserved manual ci.yml copy below.
+          rm -rf .github/workflows
+
+          for path in "${fork_owned_paths[@]}"; do
+            mkdir -p "$(dirname "${path}")"
+            cp -a "${fork_owned_dir}/${path}" "${path}"
+          done
+
+          SYNCED_AT="$(date -u +"%Y-%m-%dT%H:%M:%SZ")" python3 - <<'PY'
+          from __future__ import annotations
+
+          import json
+          import os
+          import pathlib
+
+          state = {
+            "upstreamRepository": os.environ["UPSTREAM_REPOSITORY"],
+            "releaseTag": os.environ["RELEASE_TAG"],
+            "releaseSha": os.environ["RELEASE_SHA"],
+            "releaseUrl": os.environ["RELEASE_URL"],
+            "releasePublishedAt": os.environ["RELEASE_PUBLISHED_AT"],
+            "syncedAt": os.environ["SYNCED_AT"],
+          }
+
+          path = pathlib.Path(os.environ["STATE_FILE"])
+          path.parent.mkdir(parents=True, exist_ok=True)
+          path.write_text(json.dumps(state, indent=2, sort_keys=True) + "\n")
+          PY
+
+          git add .github
+          git commit -m "ci: sync clawhaven fork to ${RELEASE_TAG}"
+          new_main_sha="$(git rev-parse HEAD)"
+
+          if [ "${DRY_RUN}" = "true" ]; then
+            echo "Dry run: would force-with-lease main from ${old_main_sha} to ${new_main_sha}."
+          else
+            git push origin "HEAD:refs/heads/main" \
+              --force-with-lease="refs/heads/main:${old_main_sha}"
+            git update-ref refs/remotes/origin/main "${new_main_sha}"
+          fi
+
+          git switch -C "${head_branch}" "${old_head_sha}"
+          if ! git rebase --empty=drop --onto "${new_main_sha}" "${old_main_sha}"; then
+            conflicts="$(git diff --name-only --diff-filter=U | sort || true)"
+            git rebase --abort || true
+
+            body="$(printf 'The release sync updated fork `main`, but `%s` could not be rebased cleanly. The branch was not pushed.\n\nConflicting files:\n\n```\n%s\n```\n\nManual recovery:\n\n```bash\ngit fetch origin main %s\ngit switch %s\ngit rebase origin/main\n# resolve conflicts, then:\ngit push origin HEAD:%s --force-with-lease\ngh workflow run %s --repo %s --ref %s\n```\n' \
+              "${head_branch}" \
+              "${conflicts:-<unknown>}" \
+              "${head_branch}" \
+              "${head_branch}" \
+              "${head_branch}" \
+              "${CI_WORKFLOW_FILE}" \
+              "${GITHUB_REPOSITORY}" \
+              "${head_branch}")"
+            post_pr_comment "ClawHaven nightly sync rebase conflict" "${body}"
+            exit 1
+          fi
+
+          new_head_sha="$(git rev-parse HEAD)"
+
+          if [ "${DRY_RUN}" = "true" ]; then
+            echo "Dry run: would force-with-lease ${head_branch} from ${old_head_sha} to ${new_head_sha}."
+            echo "Dry run: would dispatch ${CI_WORKFLOW_FILE} on ${head_branch}."
+          else
+            git push origin "HEAD:refs/heads/${head_branch}" \
+              --force-with-lease="refs/heads/${head_branch}:${old_head_sha}"
+
+            if ! dispatch_checks; then
+              body="$(printf 'The release sync pushed the rebased PR branch, but explicit check dispatch failed.\n\nManual recovery:\n\n```bash\ngh workflow run %s --repo %s --ref %s\n```\n' \
+                "${CI_WORKFLOW_FILE}" \
+                "${GITHUB_REPOSITORY}" \
+                "${head_branch}")"
+              post_pr_comment "ClawHaven nightly sync check dispatch failed" "${body}"
+              exit 1
+            fi
+          fi
+
+          {
+            echo "## ClawHaven release sync"
+            echo
+            echo "- Release: [${RELEASE_TAG}](${RELEASE_URL})"
+            echo "- Release SHA: \`${RELEASE_SHA}\`"
+            echo "- Previous main: \`${old_main_sha}\`"
+            echo "- New main: \`${new_main_sha}\`"
+            echo "- Head branch: \`${head_branch}\`"
+            echo "- Previous head: \`${old_head_sha}\`"
+            echo "- New head: \`${new_head_sha}\`"
+            if [ "${DRY_RUN}" = "true" ]; then
+              echo "- Result: dry run only; no branches were pushed and checks were not dispatched."
+            else
+              echo "- Result: pushed main, pushed rebased PR branch, and dispatched ClawHaven CI."
+            fi
+          } >> "${GITHUB_STEP_SUMMARY}"
